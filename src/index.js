@@ -1,7 +1,6 @@
 import React, { useState, useRef } from "react";
 import { render } from "react-dom";
 import { Stage, Layer, Image } from "react-konva";
-import html2canvas from 'html2canvas';
 import axios from "axios";
 import "gifler";
 
@@ -34,20 +33,15 @@ const GIF = ({ src, imageRef }) => {
 const App = () => {
   // Ref for Image component
   const imageRef = useRef(null);
+  const stageRef = useRef(null);
 
   // States
   const [screenshots, setScreenshots] = useState([]); // To store recorded videos
   const [capturing, setCapturing] = useState(false); // Indicates if capturing is in progress
-  const [frames, setFrames] = useState([]); // To store captured frames
   const [gifSrc, setGifSrc] = useState(""); // To store the selected GIF src
+  const [successfulPostCount, setSuccessfulPostCount] = useState(0); // Count of successful POST requests
+  const [response, setResponse] = useState(0);
 
-  // Function to capture a frame
-  const captureFrame = () => {
-    html2canvas(document.querySelector("canvas")).then(canvas => {
-      const frame = canvas.toDataURL('image/png', 1.0);
-      setFrames(prevFrames => [...prevFrames, frame]);
-    });
-  };
 
   // Function to handle file change (selecting a GIF)
   const handleFileChange = (event) => {
@@ -58,39 +52,52 @@ const App = () => {
         setGifSrc(e.target.result);
       };
       reader.readAsDataURL(file);
-      startCapturing();
     }
   };
 
-  // Function to send captured frames to backend
-  const sendFramesToBackend = async () => {
+
+
+  const sendImageRef = async () => {
     try {
-      const formData = new FormData();
-      frames.forEach((frame, index) => {
-        formData.append("frame", frame);
-      });
-      // Send FormData to backend
-      const response = await axios.post('http://localhost:3000/upload', frames, {
+      const imageData = stageRef.current.toDataURL();
+      const jsonData = JSON.stringify({ image: imageData });
+      await axios.post('http://localhost:3000/receive-image', jsonData, {
         headers: {
           'Content-Type': 'application/json'
         }
       });
-      // Update state with the response data path for the video
-      setScreenshots([...screenshots, response.data.path]);
+
+
     } catch (error) {
       console.error('Error sending frames to backend:', error);
     }
   };
-
   // Function to start capturing frames
   const startCapturing = () => {
+    const dataPromises = [];
     setCapturing(true);
-    setFrames([]);
-    const captureInterval = setInterval(captureFrame, 100);
-    setTimeout(() => {
+
+    const captureInterval = setInterval(() => {
+      const promise = sendImageRef(); // Call API periodically
+      dataPromises.push(promise); // Store the promise
+    }, 500);
+    // const captureInterval = setInterval(sendImageRef, 500);
+    setTimeout(async () => {
       clearInterval(captureInterval);
-      setCapturing(false);
-    }, 5000);
+      Promise.all(dataPromises)
+        .then(async () => {
+          const response = await axios.get('http://localhost:3000/createVideo');
+          setScreenshots([...screenshots, response.data.path]);
+          setCapturing(false);
+        })
+        .catch(error => {
+          setCapturing(false);
+
+          // Handle any errors that occur during Promise.all()
+          console.error('Error in Promise.all():', error);
+        });
+
+    }, 12000);
   };
 
   // Render JSX
@@ -100,18 +107,19 @@ const App = () => {
       <input type="file" accept=".gif" onChange={handleFileChange} />
       {/* Render GIF and export button if a GIF is selected */}
       {gifSrc && <>
-        <Stage width={window.innerWidth} height={window.innerHeight}>
+        <Stage width="500" height="500" ref={stageRef}>
           <Layer>
             <GIF src={gifSrc} imageRef={imageRef} />
           </Layer>
         </Stage>
-        <button onClick={sendFramesToBackend}>
+        {/* Display capturing status */}
+        {capturing ? <p>Capturing...</p> : <button onClick={startCapturing}>
           Export video
-        </button>
+        </button>}
+
       </>}
 
-      {/* Display capturing status */}
-      {capturing && <p>Capturing...</p>}
+
 
       {/* Display recorded videos */}
       <div>
