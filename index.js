@@ -3,6 +3,7 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const puppeteer = require('puppeteer');
 const bodyParser = require('body-parser');
 const { exec } = require('child_process');
 
@@ -43,7 +44,7 @@ app.post('/upload', (req, res) => {
   const resolution = "1280:720";
   const framerate = 1;
   const command = `ffmpeg -framerate 1/${framerate} -i upload/frame_%d.png -vf "scale=${resolution}" -c:v libx264 -r ${framerate} -pix_fmt yuv420p public/${outputFile}`;
-  
+
   // Execute ffmpeg command
   exec(command, (error, stdout, stderr) => {
     if (error) {
@@ -87,7 +88,71 @@ app.get('/video/:id', (req, res) => {
     fs.createReadStream(path).pipe(res);
   }
 });
+app.get('/createVideo', (req, res) => {
+  const outputFile = Date.now() + '.mp4';
+  const resolution = "1280:720";
+  const framerate = 1;
+  const command = `ffmpeg -framerate 1/${framerate} -i upload/frame_%d.png -vf "scale=${resolution}" -c:v libx264 -r ${framerate} -pix_fmt yuv420p public/${outputFile}`;
+  const uploadFolderPath = 'upload';
 
+
+  // Execute ffmpeg command
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.log('error', error);
+      res.status(500).send("error");
+    } else {
+      // Remove any existing files in the upload folder
+      fs.readdirSync(uploadFolderPath).forEach(file => {
+        const filePath = `${uploadFolderPath}/${file}`;
+        fs.unlinkSync(filePath);
+      });
+      app.set('createImage.counter', 0);
+      
+      res.send({ path: outputFile });
+    }
+  });
+});
+
+
+app.post('/receive-image', async (req, res) => {
+  const { image } = req.body;
+  const imageBase64 = image; // Assuming imageData is sent as base64 string
+  await processImage(imageBase64);
+
+  res.send("sucess");
+});
+
+async function processImage(imageBase64) {
+  const browser = await puppeteer.launch();
+  const page = await browser.newPage();
+
+  // Set the viewport size to match the canvas dimensions
+  await page.setViewport({ width: 800, height: 600 }); // Adjust width and height as needed
+
+  // Create a blank HTML page with a canvas element
+  const htmlContent = `
+  <html>
+      <body>
+          <img src="${imageBase64}" />
+      </body>
+  </html>
+`;
+
+  // Set content of the page
+  await page.setContent(htmlContent);
+
+  let counter = app.get('createImage.counter');
+  // Take a screenshot
+  const screenshotPath = `upload/frame_${counter}.png`;
+  await page.screenshot({ path: screenshotPath });
+
+  await browser.close();
+  app.set('createImage.counter', counter + 1);
+  return screenshotPath;
+}
+
+app.set('createImage.counter', 1);
 // Start the server
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
